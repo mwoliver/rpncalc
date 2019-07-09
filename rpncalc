@@ -53,6 +53,8 @@
 #        Added limit to displayed rows in memory stack by variable _MSTACK_VISIBLE_DEPTH (default to 4)
 #        Added 'disp n' command to adjust _STACK_VISIBLE_DEPTH on the fly
 #        Added 'mdisp n' command to adjust _MSTACK_VISIBLE_DEPTH on the fly
+# v3.1 - Added asin, acos, acsc, asec, acot trigonometric functions
+#        Moved exponential power to separate section and refactor to allow for floating point exponents
 
 
 #============== BASH COLORS =============================================
@@ -92,7 +94,7 @@ _COLOR_FG_NONE='\e[0m' # No Color
 #
 # User-configurable stuff
 #
-# Here are the variables that you can override in your conf file (~.rpncalc/rpncalc.conf by default)
+# Here are the variables that you can override in your conf file (~/.rpncalc/rpncalc.conf by default)
 #
 _ANG="DEG"  # Angle measurement system, DEG=degrees, RAD=radians, set to either DEG or RAD in conf file
 _HELP=0     # HELP display, 0=off, 1=on, can toggle while using the calculator with 'help' command
@@ -140,6 +142,7 @@ _MSTACK_FILE="${_CONF_DIR}/rpncalc.mstack"
 ##################################################################################################################################
 ##################################################################################################################################
 ##################################################################################################################################
+
 
 
 
@@ -498,7 +501,7 @@ do
 		# Before we do, however, let's create a backup for reference.
 		#
 		mv ${_MSTACK_FILE} ${_MSTACK_FILE}.backup_$(date +%Y_%m_%d_%H_%M_%S) && touch ${_MSTACK_FILE}
-		# 
+		#
 		# purge the memory stack
 		#
 		for ((x=${_MSTACK_DEPTH};x>0;x--))
@@ -517,7 +520,7 @@ do
 	#
 	if [ -s ${_MSTACK_FILE} ]
 	then {
-		# 
+		#
 		# check if there is an existing memory stack, and if so, purge it and start clean
 		#
 		if [[ ${_MSTACK_DEPTH} -ge 1 ]]
@@ -599,7 +602,7 @@ do
 		}
 
 
-		elif [[ ${_INPUT} =~ ^(sqrt|sin|cos|tan|csc|sec|cot|atan|log|e|1/)($|\ [0-9]+$) ]]
+		elif [[ ${_INPUT} =~ ^(sqrt|sin|cos|tan|csc|sec|cot|asin|acos|atan|acsc|asec|acot|log|e|1/)($|\ [0-9]+$) ]]
 		#
 		# input is a function, perform on stack position 1 (or on specified position)
 		#
@@ -656,8 +659,33 @@ do
 				[[ ${_ANG} == DEG ]] && _OPERAND=$(__DEG2RAD ${_OPERAND})
 				_STACK_INPUT=$(__CALC "c(${_OPERAND})/s(${_OPERAND})")
 				;;
+			asin)
+				_STACK_INPUT=$(__CALC "a(${_OPERAND}/sqrt(1-(${_OPERAND}^2)))")
+				awk "BEGIN {return_code=(${_STACK_INPUT} >= 0) ? 0 : 1; exit} END {exit return_code}" || _STACK_INPUT=$(__CALC "${_STACK_INPUT}+${_PI}")
+				[[ ${_ANG} == DEG ]] && _STACK_INPUT=$(__RAD2DEG ${_STACK_INPUT})
+				;;
+			acos)
+				_STACK_INPUT=$(__CALC "a(sqrt(1-(${_OPERAND}^2))/${_OPERAND})")
+				awk "BEGIN {return_code=(${_STACK_INPUT} >= 0) ? 0 : 1; exit} END {exit return_code}" || _STACK_INPUT=$(__CALC "${_STACK_INPUT}+${_PI}")
+				[[ ${_ANG} == DEG ]] && _STACK_INPUT=$(__RAD2DEG ${_STACK_INPUT})
+				;;
 			atan)
 				_STACK_INPUT=$(__CALC "a(${_OPERAND})")
+				[[ ${_ANG} == DEG ]] && _STACK_INPUT=$(__RAD2DEG ${_STACK_INPUT})
+				;;
+			acsc)
+				_STACK_INPUT=$(__CALC "a(1/sqrt((${_OPERAND}^2)-1)))")
+				awk "BEGIN {return_code=(${_STACK_INPUT} >= 0) ? 0 : 1; exit} END {exit return_code}" || _STACK_INPUT=$(__CALC "${_STACK_INPUT}+${_PI}")
+				[[ ${_ANG} == DEG ]] && _STACK_INPUT=$(__RAD2DEG ${_STACK_INPUT})
+				;;
+			asec)
+				_STACK_INPUT=$(__CALC "a(sqrt((${_OPERAND}^2)-1)))")
+				awk "BEGIN {return_code=(${_STACK_INPUT} >= 0) ? 0 : 1; exit} END {exit return_code}" || _STACK_INPUT=$(__CALC "${_STACK_INPUT}+${_PI}")
+				[[ ${_ANG} == DEG ]] && _STACK_INPUT=$(__RAD2DEG ${_STACK_INPUT})
+				;;
+			acot)
+				_STACK_INPUT=$(__CALC "${_PI}/2-a(${_OPERAND}))")
+				awk "BEGIN {return_code=(${_STACK_INPUT} >= 0) ? 0 : 1; exit} END {exit return_code}" || _STACK_INPUT=$(__CALC "${_STACK_INPUT}+${_PI}")
 				[[ ${_ANG} == DEG ]] && _STACK_INPUT=$(__RAD2DEG ${_STACK_INPUT})
 				;;
 			log)
@@ -1125,12 +1153,39 @@ do
 		}
 
 
-		elif [[ ${_INPUT} =~ ^[-+*/^]$ && ${_STACK_DEPTH} -ge 2 ]]
+		elif [[ ${_INPUT} =~ ^[+-*/]$ && ${_STACK_DEPTH} -ge 2 ]]
 		then {
 			#
-			# Perform calculation on two lowest stack operands
+			# Perform add/subtract/multiply/divide calculation on two lowest stack operands
 			#
 			_STACK[1]=$(__CALC "${_STACK[2]} ${_INPUT} ${_STACK[1]}")
+			#
+			# Shift stack values down one place
+			#
+			for ((x=2;x<${_STACK_DEPTH};x++))
+			do
+				_STACK[${x}]=${_STACK[$((${x}+1))]}
+			done
+			#
+			# Clear highest stack value since it was shifted down one place in the stack
+			#
+			unset _STACK[${_STACK_DEPTH}]
+			#
+			# Reduce stack depth by one after completing the operation
+			#
+			((--_STACK_DEPTH))
+		}
+
+
+		elif [[ ${_INPUT} =~ ^\^$ && ${_STACK_DEPTH} -ge 2  ]]
+		#
+		# calculate exponential power
+		#
+		then {
+			#
+			# Perform calculation Y^X where Y = Stack Position 2 and X = Stack Position 1
+			#
+			_STACK[1]=$(__CALC "e(l(${_STACK[2]})*${_STACK[1]})")
 			#
 			# Shift stack values down one place
 			#
