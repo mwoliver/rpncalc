@@ -55,6 +55,7 @@
 #        Added 'mdisp n' command to adjust _MSTACK_VISIBLE_DEPTH on the fly
 # v3.1 - Added asin, acos, acsc, asec, acot trigonometric functions
 #        Moved exponential power to separate section and refactor to allow for floating point exponents
+# v3.2 - Updated contextual help to include new commands from v3.1, trim to fit nicely in 132 col terminal
 
 
 #============== BASH COLORS =============================================
@@ -295,12 +296,11 @@ __PRINT_HELP () {
 
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}n.n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-n.n${_COLOR_FG_NONE} Add operand 'n' to the stack\n"
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}+${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}*${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}/${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}^${_COLOR_FG_NONE} Perform operation on stack positions 2 & 1\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}--${_COLOR_FG_NONE} Subtract stack position 1 by stack position 2 (swap then -, combined)\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}//${_COLOR_FG_NONE} Divide stack position 1 by stack position 2\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}--{_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}//${_COLOR_FG_NONE} Subtract or divide stack position 1 by stack position 2 (swap then - or /, combined)\n"
 
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}DEG${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}deg${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}RAD${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rad${_COLOR_FG_NONE} Switch to DEGree or RADian mode\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/${_COLOR_FG_NONE} Apply function to stack position 1, overwriting original value\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/ p${_COLOR_FG_NONE} Apply function to stack position 'p' and insert result into stack at position 1\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/${_COLOR_FG_NONE} Apply to stack '1', overwriting '1'\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/ p${_COLOR_FG_NONE} Apply to stack 'p', insert result in stack '1'\n"
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}pi${_COLOR_FG_NONE} Insert value of pi\n"
 
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}perm${_COLOR_FG_NONE} Calculate permutations (stack position 2 is 'n', position 1 is 'r')\n"
@@ -1153,7 +1153,7 @@ do
 		}
 
 
-		elif [[ ${_INPUT} =~ ^[+-*/]$ && ${_STACK_DEPTH} -ge 2 ]]
+		elif [[ ${_INPUT} =~ ^[-+*/]$ && ${_STACK_DEPTH} -ge 2 ]]
 		then {
 			#
 			# Perform add/subtract/multiply/divide calculation on two lowest stack operands
