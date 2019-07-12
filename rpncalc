@@ -1156,7 +1156,8 @@ do
 		elif [[ ${_INPUT} =~ ^[-+*/]$ && ${_STACK_DEPTH} -ge 2 ]]
 		then {
 			#
-			# Perform add/subtract/multiply/divide calculation on two lowest stack operands
+			# Perform subtract/add/multiply/divide calculation on two lowest stack operands
+			# (operands must be in this (-+*/) order, otherwise [[ ]] fails to match input)
 			#
 			_STACK[1]=$(__CALC "${_STACK[2]} ${_INPUT} ${_STACK[1]}")
 			#
