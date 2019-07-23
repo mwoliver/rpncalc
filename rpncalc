@@ -1,5 +1,8 @@
 #!/bin/bash
 
+_DEBUG=0
+[ $_DEBUG -eq 1 ] && set -x
+
 ###############################################################################
 #
 # rpncalc - a bash+bc RPN calculator for your terminal
@@ -20,7 +23,9 @@
 #
 # Note that I built and run this in a 132x43 terminal and it looks sane in my
 # terminal. If you have a smaller terminal then I can't guarantee that it will
-# look as nice to you as it does to me.
+# look as nice to you as it does to me. I've tried to test and use this in a
+# typical 80x24 terminal and it appears sane, but I'm happy to accept patches
+# if that's not the case for you.
 #
 ###############################################################################
 
@@ -56,6 +61,11 @@
 # v3.1 - Added asin, acos, acsc, asec, acot trigonometric functions
 #        Moved exponential power to separate section and refactor to allow for floating point exponents
 # v3.2 - Updated contextual help to include new commands from v3.1, trim to fit nicely in 132 col terminal
+# v3.3 - Trim stack output for better viewing in smaller 80x24 terminals
+# v3.4 - Change all %f printfs to %s since numbers >63 bits binary cause binary truncation. This only
+#        affects stack printing in the terminal. All calculations were already being handled properly
+#        but stack printing blew up with huge numbers. So, now all decimal point alignment in the
+#        stack printing is gone, but there's no solution that I know of yet for printf %f 63 bit limit
 
 
 #============== BASH COLORS =============================================
@@ -110,7 +120,7 @@ _WIDTH=$(stty -a  | grep -Po '(?<=columns )\d+')     # set to desired border wid
 _COLOR_FRAME="${_COLOR_FG_BRIGHT_GREEN}"    # color used for frames around sections (stack, memory stack, history, etc)
 _COLOR_TITLE="${_COLOR_FG_BRIGHT_MAGENTA}"  # color for various titles and headings
 _COLOR_ROW_1="${_COLOR_FG_BRIGHT_YELLOW}"   # alternating colors for stack entries to help with spatial disorientation
-_COLOR_ROW_2="${_COLOR_FG_BRIGHT_BLUE}"     # alternating colors for stack entries to help with spatial disorientation
+_COLOR_ROW_2="${_COLOR_FG_DIM_YELLOW}"      # alternating colors for stack entries to help with spatial disorientation
 
 
 
@@ -198,9 +208,9 @@ __PRINT_WORKING_STACK () {
 			do
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %50.20f${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %50.20f${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
 				} fi
 			done
 		} else {
@@ -211,9 +221,9 @@ __PRINT_WORKING_STACK () {
 			do
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %50.20f${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %50.20f${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
 				} fi
 			done
 		} fi
@@ -255,9 +265,9 @@ __PRINT_MEMORY_STACK () {
 			do
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %50.20f - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %50.20f - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
 				} fi
 			done
 		} else {
@@ -268,9 +278,9 @@ __PRINT_MEMORY_STACK () {
 			do
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %50.20f - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %50.20f - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
 				} fi
 			done
 		} fi
@@ -299,8 +309,8 @@ __PRINT_HELP () {
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}--${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}//${_COLOR_FG_NONE} Subtract or divide stack position 1 by stack position 2 (swap then - or /, combined)\n"
 
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}DEG${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}deg${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}RAD${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rad${_COLOR_FG_NONE} Switch to DEGree or RADian mode\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/${_COLOR_FG_NONE} Apply to stack '1', overwriting '1'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/ p${_COLOR_FG_NONE} Apply to stack 'p', insert result in stack '1'\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/${_COLOR_FG_NONE} Apply to stack '1', overwriting '1'\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/ p${_COLOR_FG_NONE} Apply to stack 'p', insert result in stack '1'\n"
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}pi${_COLOR_FG_NONE} Insert value of pi\n"
 
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}perm${_COLOR_FG_NONE} Calculate permutations (stack position 2 is 'n', position 1 is 'r')\n"
@@ -1336,7 +1346,7 @@ do
 		break
 	done
 
-	clear
+	[ $_DEBUG -eq 0 ] && clear
 
 	printf "${_HR_TOP}\n"
 	[[ ${_HELP} -eq 1 ]] && __PRINT_HELP
