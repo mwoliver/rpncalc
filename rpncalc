@@ -66,6 +66,8 @@ _DEBUG=0
 #        affects stack printing in the terminal. All calculations were already being handled properly
 #        but stack printing blew up with huge numbers. So, now all decimal point alignment in the
 #        stack printing is gone, but there's no solution that I know of yet for printf %f 63 bit limit
+# v3.5 - Add some checks to __CALC function to attempt to squash precision errors, not sure if this
+#        will be kept, will depend on whether this introduces other errors as a consequence.
 
 
 #============== BASH COLORS =============================================
@@ -172,7 +174,26 @@ source ${_CONF_FILE}
 #
 #
 __CALC () {
-	echo "$1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed '/\./ s/\.\{0,1\}0\{1,\}$//'
+	_ANS=$(echo "scale=100; $1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed '/\./ s/\.\{0,1\}0\{1,\}$//')
+	#
+	# Ok, let's *attempt* to work around precision errors where we're either
+	# just under or over the proper value due to computer math errors. The
+	# number of repeating nines and zeroes is not scientifically chosen.
+	#
+	if [[ ${_ANS} =~ (\.99999999999999999999999999999999999999999999) ]]
+	then {
+		#
+		# just under proper value, chop fraction and add 1
+		#
+		_ANS=$((${_ANS%.*}+1))
+	} elif [[ ${_ANS} =~ (\.00000000000000000000000000000000000000000000) ]]
+	then {
+		#
+		# just over proper value, chop fraction
+		#
+		_ANS=${_ANS%.*}
+	} fi
+	echo ${_ANS}
 }
 #
 #
