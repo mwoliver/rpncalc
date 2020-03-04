@@ -68,7 +68,9 @@ _DEBUG=0
 #        stack printing is gone, but there's no solution that I know of yet for printf %f 63 bit limit
 # v3.5 - Add some checks to __CALC function to attempt to squash precision errors, not sure if this
 #        will be kept, will depend on whether this introduces other errors as a consequence.
-
+# v3.6 - Added some formatting stuff to stack and memory stack printing functions to truncate numbers
+#        longer than WIDTH and replace with ellipsis and value length in parenthesis. This should
+#        make handling long numbers much friendlier in the terminal. Please report bugs! :-)
 
 #============== BASH COLORS =============================================
 # Black        0;30     Dark Gray     1;30
@@ -174,7 +176,7 @@ source ${_CONF_FILE}
 #
 #
 __CALC () {
-	_ANS=$(echo "scale=100; $1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed '/\./ s/\.\{0,1\}0\{1,\}$//')
+	_ANS=$(echo "scale=500; $1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed '/\./ s/\.\{0,1\}0\{1,\}$//')
 	#
 	# Ok, let's *attempt* to work around precision errors where we're either
 	# just under or over the proper value due to computer math errors. The
@@ -227,11 +229,23 @@ __PRINT_WORKING_STACK () {
 			#
 			for ((x=${_STACK_DISPLAY_DEPTH};x>0;x--))
 			do
+				#
+				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
+				#
+				_STACK_VALUE_TO_PRINT=${_STACK[x]}
+				if [ ${#_STACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10)) ]
+				then {
+					_STACK_VALUE_SUFFIX="... (${#_STACK[x]})"
+					_STACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_STACK_VALUE_SUFFIX}))
+					_STACK_VALUE_TO_PRINT="${_STACK_VALUE_TO_PRINT:0:${_STACK_VALUE_WIDTH}}${_STACK_VALUE_SUFFIX}"
+				} fi
+				#
+				#
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
 				} fi
 			done
 		} else {
@@ -240,13 +254,26 @@ __PRINT_WORKING_STACK () {
 			#
 			for ((x=${_STACK_DISPLAY_DEPTH};x>0;x--))
 			do
+				#
+				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
+				#
+				_STACK_VALUE_TO_PRINT=${_STACK[x]}
+				if [ ${#_STACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10)) ]
+				then {
+					_STACK_VALUE_SUFFIX="... (${#_STACK[x]})"
+					_STACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_STACK_VALUE_SUFFIX}))
+					_STACK_VALUE_TO_PRINT="${_STACK_VALUE_TO_PRINT:0:${_STACK_VALUE_WIDTH}}${_STACK_VALUE_SUFFIX}"
+				} fi
+				#
+				#
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
 				} fi
 			done
+			unset _STACK_VALUE_TO_PRINT
 		} fi
 	} else {
 		printf "${_VR}   Stack is empty...\n"
@@ -284,11 +311,23 @@ __PRINT_MEMORY_STACK () {
 			#
 			for ((x=${_MSTACK_DISPLAY_DEPTH};x>0;x--))
 			do
+				#
+				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
+				#
+				_MSTACK_VALUE_TO_PRINT=${_MSTACK_VALUE[x]}
+				if [ ${#_MSTACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10-${#_MSTACK_DESC[x]}-3)) ]
+				then {
+					_MSTACK_VALUE_SUFFIX="... (${#_MSTACK_VALUE[x]})"
+					_MSTACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_MSTACK_VALUE_SUFFIX}-${#_MSTACK_DESC[x]}-3))
+					_MSTACK_VALUE_TO_PRINT="${_MSTACK_VALUE_TO_PRINT:0:${_MSTACK_VALUE_WIDTH}}${_MSTACK_VALUE_SUFFIX}"
+				} fi
+				#
+				#
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
 				} fi
 			done
 		} else {
@@ -297,11 +336,23 @@ __PRINT_MEMORY_STACK () {
 			#
 			for ((x=${_MSTACK_DISPLAY_DEPTH};x>0;x--))
 			do
+				#
+				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
+				#
+				_MSTACK_VALUE_TO_PRINT=${_MSTACK_VALUE[x]}
+				if [ ${#_MSTACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10-${#_MSTACK_DESC[x]}-3)) ]
+				then {
+					_MSTACK_VALUE_SUFFIX="... (${#_MSTACK_VALUE[x]})"
+					_MSTACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_MSTACK_VALUE_SUFFIX}-${#_MSTACK_DESC[x]}-3))
+					_MSTACK_VALUE_TO_PRINT="${_MSTACK_VALUE_TO_PRINT:0:${_MSTACK_VALUE_WIDTH}}${_MSTACK_VALUE_SUFFIX}"
+				} fi
+				#
+				#
 				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
 				then {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_VALUE[x]} ${_MSTACK_DESC[x]}
+					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
 				} fi
 			done
 		} fi
