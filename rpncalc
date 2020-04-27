@@ -71,6 +71,20 @@ _DEBUG=0
 # v3.6 - Added some formatting stuff to stack and memory stack printing functions to truncate numbers
 #        longer than WIDTH and replace with ellipsis and value length in parenthesis. This should
 #        make handling long numbers much friendlier in the terminal. Please report bugs! :-)
+# v4.0 - Rework memory stack format and storage. If you have stored memory content then you'll need
+#        to rewrite it from "# value description" to "description|value". To convert your existing
+#        rpncalc.mstack file to the new format, assuming you're storing it in the typical location
+#        with the typical name, you can do something like...
+#
+#           cd ~/.rpncalc
+#           mv rpncalc.mstack rpncalc.mstack.old
+#           cat rpncalc.mstack.old | while read foo val desc; do echo "${desc}|${val}" >>rpncalc.mstack; done
+#
+#        After which you'll be ready to run the v4.0+ version of rpncalc. Also reworked exponent handling
+#        because the workaround for fractional exponents broke simple exponents. Bump major version
+#        due to format change of mstack storage file. Also optimized the __CALC function a bit.
+
+
 
 #============== BASH COLORS =============================================
 # Black        0;30     Dark Gray     1;30
@@ -176,11 +190,23 @@ source ${_CONF_FILE}
 #
 #
 __CALC () {
-	_ANS=$(echo "scale=500; $1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed '/\./ s/\.\{0,1\}0\{1,\}$//')
+	#
+	# After setting the scale and passing the equation to bc, trim the bc
+	# output to delete the whitespace, backslash, and newlines we'll see with
+	# long answers from bc, and then use sed to delete trailing zeroes and
+	# add a preceding zero to fractions 1 > n > -1.
+	#
+	# The first sed expression looks for a string with a decimal point using
+	# the "/\./" search, and then starting with zero to one, inclusive,
+	# decimal points using "\.\{0,1\}" followed by one or more zeroes using
+	# "0\{1,\}" to the end of the string and replaces that match with nothing.
+	#
+	_ANS=$(echo "scale=500; $1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed -e '/\./ s/\.\{0,1\}0\{1,\}$//' -e 's/^\./0./' -e 's/^-\./-0./')
 	#
 	# Ok, let's *attempt* to work around precision errors where we're either
 	# just under or over the proper value due to computer math errors. The
-	# number of repeating nines and zeroes is not scientifically chosen.
+	# number of repeating nines and zeroes is not scientifically chosen. This
+	# is kinda gross, happy to hear your suggestions!
 	#
 	if [[ ${_ANS} =~ (\.99999999999999999999999999999999999999999999) ]]
 	then {
@@ -449,16 +475,27 @@ __BUILD_MEMORY_STACK_FROM_FILE () {
 	#
 	# initialize memory stack from file
 	#
-	while IFS=" " read _MSTACK_FILE_POS _MSTACK_FILE_VALUE _MSTACK_FILE_DESC
+	# Start with max depth and count down to keep mstack file and working
+	# mstack in same order, oldest at top and newest at bottom
+	#
+	_MSTACK_DEPTH=$(wc -l ${_MSTACK_FILE} | cut -d' ' -f1)
+	#
+	# Set a temp var to same value which we can decrease as we step through
+	# building the mstack
+	#
+	_MSTACK_BUILD_DEPTH=${_MSTACK_DEPTH}
+	#
+	while IFS="|" read _MSTACK_FILE_DESC _MSTACK_FILE_VALUE
 	do
-		# Keep pushing _MSTACK_DEPTH higher as we step through the stored memory stack file
-		#
-		((++_MSTACK_DEPTH))
-		#
 		# Insert value and description read from file into the memory stack
 		#
-		_MSTACK_VALUE[${_MSTACK_FILE_POS}]="${_MSTACK_FILE_VALUE}"
-		_MSTACK_DESC[${_MSTACK_FILE_POS}]="${_MSTACK_FILE_DESC}"
+		_MSTACK_DESC[${_MSTACK_BUILD_DEPTH}]="${_MSTACK_FILE_DESC}"
+		_MSTACK_VALUE[${_MSTACK_BUILD_DEPTH}]="${_MSTACK_FILE_VALUE}"
+		#
+		# Keep pushing _MSTACK_DEPTH lower as we step through the mstack file
+		#
+		_MSTACK_BUILD_DEPTH=$((${_MSTACK_BUILD_DEPTH}-1))
+		#
 	done < ${_MSTACK_FILE}
 }
 #
@@ -666,7 +703,22 @@ do
 		#
 		then {
 			#
-			# shift all stack values up one place in the stack to make room for new operand in position 1
+			# If operand is 1 > n > -1 without preceding zero, go ahead
+			# and tack it on.
+			#
+			if [[ ${_INPUT} =~ ^[+-]?\.[0-9]+$ ]]
+			then {
+				_INPUT=${_INPUT/./0.}
+			} fi
+			#
+			# If operand has preceding '+', drop it.
+			#
+			if [[ ${_INPUT:0:1} =~ "+" ]]
+			then {
+				_INPUT=${_INPUT/+/}
+			} fi
+			#
+			# Shift all stack values up one place in the stack to make room for new operand in position 1
 			#
 			((++_STACK_DEPTH))
 			if [[ ${_STACK_DEPTH} -gt 1 ]]
@@ -1042,9 +1094,9 @@ do
 			then {
 				for ((x=${_MSTACK_DEPTH};x>1;x--))
 				do
-					_MSTACK_VALUE[${x}]=${_MSTACK_VALUE[$(($x-1))]}
 					_MSTACK_DESC[${x}]=${_MSTACK_DESC[$(($x-1))]}
-					echo "${x} ${_MSTACK_VALUE[${x}]} ${_MSTACK_DESC[${x}]}" >>${_MSTACK_FILE}
+					_MSTACK_VALUE[${x}]=${_MSTACK_VALUE[$(($x-1))]}
+					echo "${_MSTACK_DESC[${x}]}|${_MSTACK_VALUE[${x}]}" >>${_MSTACK_FILE}
 				done
 			} fi
 			#
@@ -1052,7 +1104,7 @@ do
 			#
 			_MSTACK_VALUE[1]=${_STACK[1]}
 			_MSTACK_DESC[1]=${_DESC}
-			echo "1 ${_MSTACK_VALUE[1]} ${_MSTACK_DESC[1]}" >>${_MSTACK_FILE}
+			echo "${_MSTACK_DESC[1]}|${_MSTACK_VALUE[1]}" >>${_MSTACK_FILE}
 		}
 
 
@@ -1106,14 +1158,14 @@ do
 			#
 			for ((x=${_MSTACK_POS};x<${_MSTACK_DEPTH};x++))
 			do
-				_MSTACK_VALUE[${x}]=${_MSTACK_VALUE[$((${x}+1))]}
 				_MSTACK_DESC[${x}]=${_MSTACK_DESC[$((${x}+1))]}
+				_MSTACK_VALUE[${x}]=${_MSTACK_VALUE[$((${x}+1))]}
 			done
 			#
 			# Clear highest stack value since it was shifted down one place in the stack
 			#
-			unset _MSTACK_VALUE[${_MSTACK_DEPTH}]
 			unset _MSTACK_DESC[${_MSTACK_DEPTH}]
+			unset _MSTACK_VALUE[${_MSTACK_DEPTH}]
 			#
 			# Reduce stack depth by one after completing the operation
 			#
@@ -1125,7 +1177,7 @@ do
 			then {
 				for ((x=${_MSTACK_DEPTH};x>0;x--))
 				do
-					echo "${x} ${_MSTACK_VALUE[${x}]} ${_MSTACK_DESC[${x}]}" >>${_MSTACK_FILE}
+					echo "${_MSTACK_DESC[${x}]}|${_MSTACK_VALUE[${x}]}" >>${_MSTACK_FILE}
 				done
 			} fi
 		}
@@ -1209,7 +1261,7 @@ do
 		}
 
 
-		elif [[ ${_INPUT} =~ ^[-+]?pi$ ]]
+		elif [[ ${_INPUT} =~ ^pi$ ]]
 		#
 		# input is an operand, add to stack
 		#
@@ -1241,7 +1293,7 @@ do
 			# Perform subtract/add/multiply/divide calculation on two lowest stack operands
 			# (operands must be in this (-+*/) order, otherwise [[ ]] fails to match input)
 			#
-			_STACK[1]=$(__CALC "${_STACK[2]} ${_INPUT} ${_STACK[1]}")
+			_STACK[1]=$(__CALC "(${_STACK[2]}) ${_INPUT} (${_STACK[1]})")
 			#
 			# Shift stack values down one place
 			#
@@ -1268,7 +1320,17 @@ do
 			#
 			# Perform calculation Y^X where Y = Stack Position 2 and X = Stack Position 1
 			#
-			_STACK[1]=$(__CALC "e(l(${_STACK[2]})*${_STACK[1]})")
+			# If the exponent is not an integer then work around it...
+			#
+			if [[ ${_STACK[1]} =~ ^[-+]?(([0-9]+)?\.[0-9]+)$ ]]
+			then {
+				#
+				# Exponent is not an integer, need to pass it to bc differently
+				#
+				_STACK[1]=$(__CALC "e(l(${_STACK[2]})*${_STACK[1]})")
+			} else {
+				_STACK[1]=$(__CALC "${_STACK[2]}^${_STACK[1]}")
+			} fi
 			#
 			# Shift stack values down one place
 			#
