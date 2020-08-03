@@ -1,13 +1,10 @@
 #!/bin/bash
 
-_DEBUG=0
-[ $_DEBUG -eq 1 ] && set -x
-
 ###############################################################################
 #
 # rpncalc - a bash+bc RPN calculator for your terminal
 #
-# (c) 2019 Michael Wayne Oliver
+# (c) 2019 - Today by Michael Wayne Oliver
 #
 # The latest version is always available at https://fifo.io/rpncalc
 #
@@ -83,7 +80,14 @@ _DEBUG=0
 #        After which you'll be ready to run the v4.0+ version of rpncalc. Also reworked exponent handling
 #        because the workaround for fractional exponents broke simple exponents. Bump major version
 #        due to format change of mstack storage file. Also optimized the __CALC function a bit.
-
+# v4.1 - Added new function to insert thousands separators in both the integer and fractional parts of
+#        a value, originating at the decimal point, when printing memory and working stack values. The
+#        separators are only inserted when printing the value, not affecting the value stored in the
+#        working & memory stack arrays. This is for readabililty only. This is optional and can be
+#        toggled by setting the "_OPT_THOU_SEP" value to 1 to enable, anything else to disable. Also
+#        the "_OPT_THOU_SEP_FRAC" to enable for right side of decimal, anything else to disable.
+# v4.2 - Added real-time toggle to en/disable digit grouping (faster without, easier to read with) by
+#        issuing the 'ts' and 'tsf' commands. Those will toggle thousands separators on/off.
 
 
 #============== BASH COLORS =============================================
@@ -130,8 +134,8 @@ _HELP=0     # HELP display, 0=off, 1=on, can toggle while using the calculator w
 _HIST=0     # HISTORY display, 0=off, 1=on, can toggle while using the calculator with 'hist' command
 _LAST=0     # last command display, 0=off, 1=on, can toggle while using the calculator with 'last' command
 #
-_MSTACK_VISIBLE_DEPTH=4 # How many rows of the memory stack should be visible?
-_STACK_VISIBLE_DEPTH=4  # How many rows of the working stack should be visible?
+_MSTACK_VISIBLE_DEPTH=8  # How many rows of the memory stack should be visible?
+_STACK_VISIBLE_DEPTH=8   # How many rows of the working stack should be visible?
 #
 _WIDTH=$(stty -a  | grep -Po '(?<=columns )\d+')     # set to desired border width, something less than or equal to terminal width
 #
@@ -139,6 +143,13 @@ _COLOR_FRAME="${_COLOR_FG_BRIGHT_GREEN}"    # color used for frames around secti
 _COLOR_TITLE="${_COLOR_FG_BRIGHT_MAGENTA}"  # color for various titles and headings
 _COLOR_ROW_1="${_COLOR_FG_BRIGHT_YELLOW}"   # alternating colors for stack entries to help with spatial disorientation
 _COLOR_ROW_2="${_COLOR_FG_DIM_YELLOW}"      # alternating colors for stack entries to help with spatial disorientation
+#
+_OPT_THOU_SEP="1"       # Set to 1 to enable thousands separator to left of decimal, anything else to disable
+_OPT_THOU_SEP_FRAC="1"  # Set to 1 to enable separator to right of decimal, anything else to disable
+_THOU_SEP_CHAR=","      # Thousands separator (whitespace, comma, whatever...) for left of decimal
+_THOU_SEP_CHAR_FRAC=" " # Thousands separator (whitespace, comma, whatever...) for right of decimal
+#
+_DEBUG=0  # Set to 1 to enable debug, anything else to disable
 
 
 
@@ -174,6 +185,12 @@ _MSTACK_FILE="${_CONF_DIR}/rpncalc.mstack"
 
 
 
+#
+# Is debugging enabled? If so, turn it on...
+#
+[ $_DEBUG -eq 1 ] && set -x
+
+
 
 #
 # Load overrides for user-configurable stuff from config file
@@ -189,6 +206,60 @@ source ${_CONF_FILE}
 #========================================================================
 #
 #
+__THOU_SEP () {
+	local _INTEGER=${1/%.*/}
+	#
+	# Check if we have a fractional value by searching for decimal point
+	#
+	if [[ ${1} =~ '.' ]]
+	then {
+		#
+		# There is a fractional value, act upon fraction accordingly
+		#
+		local _FRACTION=${1/#*./}
+		#
+		# Are we adding separators for the fraction?
+		#
+		if [ ${_OPT_THOU_SEP_FRAC} -eq 1 ]
+		then {
+			#
+			# The fraction is more difficult, need to reverse order, separate in groups of three, then reverse order again
+			#
+			local _TS_FRAC=$(echo ${_FRACTION} | rev | awk -v _THOU_SEP_CHAR_FRAC=${_THOU_SEP_CHAR_FRAC} '{ len=length($0); res=""; for (i=0;i<=len;i++) { res=substr($0,len-i+1,1) res; if (i > 0 && i < len && i % 3 == 0) { res = _THOU_SEP_CHAR_FRAC res } }; print res }' | rev)
+		} else {
+			#
+			# Separators for the fractional value are disabled, pass it through...
+			#
+			local _TS_FRAC=${_FRACTION}
+		} fi
+		#
+		# Add the decimal to the left of the fractional value for returning value later
+		#
+		_TS_FRAC=".${_TS_FRAC}"
+	} else {
+		#
+		# No fraction, just the integer, so add the defined thousands separator, if enabled
+		#
+		if [ ${_OPT_THOU_SEP} -eq 1 ]
+		then {
+			#
+			# The integer just needs right-to-left separation in groups of three, pretty easy
+			#
+			local _TS_INT=$(echo ${_INTEGER} | awk -v _THOU_SEP_CHAR=${_THOU_SEP_CHAR} '{ len=length($0); res=""; for (i=0;i<=len;i++) { res=substr($0,len-i+1,1) res; if (i > 0 && i < len && i % 3 == 0) { res = _THOU_SEP_CHAR res } }; print res }')
+		} else {
+			#
+			# Separators for the integer value are disabled, pass it through...
+			#
+			local _TS_INT=${_INTEGER}
+		} fi
+	} fi
+	#
+	# Return result
+	#
+	echo "${_TS_INT}${_TS_FRAC}"
+}
+#
+#
 __CALC () {
 	#
 	# After setting the scale and passing the equation to bc, trim the bc
@@ -201,7 +272,7 @@ __CALC () {
 	# decimal points using "\.\{0,1\}" followed by one or more zeroes using
 	# "0\{1,\}" to the end of the string and replaces that match with nothing.
 	#
-	_ANS=$(echo "scale=500; $1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed -e '/\./ s/\.\{0,1\}0\{1,\}$//' -e 's/^\./0./' -e 's/^-\./-0./')
+	_ANS=$(echo "scale=200; $1" | /usr/bin/bc -l | tr -d '\\' | tr -d '\n' | sed -e '/\./ s/\.\{0,1\}0\{1,\}$//' -e 's/^\./0./' -e 's/^-\./-0./')
 	#
 	# Ok, let's *attempt* to work around precision errors where we're either
 	# just under or over the proper value due to computer math errors. The
@@ -258,7 +329,7 @@ __PRINT_WORKING_STACK () {
 				#
 				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
 				#
-				_STACK_VALUE_TO_PRINT=${_STACK[x]}
+				_STACK_VALUE_TO_PRINT=$(__THOU_SEP ${_STACK[x]})
 				if [ ${#_STACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10)) ]
 				then {
 					_STACK_VALUE_SUFFIX="... (${#_STACK[x]})"
@@ -283,7 +354,7 @@ __PRINT_WORKING_STACK () {
 				#
 				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
 				#
-				_STACK_VALUE_TO_PRINT=${_STACK[x]}
+				_STACK_VALUE_TO_PRINT=$(__THOU_SEP ${_STACK[x]})
 				if [ ${#_STACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10)) ]
 				then {
 					_STACK_VALUE_SUFFIX="... (${#_STACK[x]})"
@@ -340,7 +411,7 @@ __PRINT_MEMORY_STACK () {
 				#
 				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
 				#
-				_MSTACK_VALUE_TO_PRINT=${_MSTACK_VALUE[x]}
+				_MSTACK_VALUE_TO_PRINT=$(__THOU_SEP ${_MSTACK_VALUE[x]})
 				if [ ${#_MSTACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10-${#_MSTACK_DESC[x]}-3)) ]
 				then {
 					_MSTACK_VALUE_SUFFIX="... (${#_MSTACK_VALUE[x]})"
@@ -365,7 +436,7 @@ __PRINT_MEMORY_STACK () {
 				#
 				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
 				#
-				_MSTACK_VALUE_TO_PRINT=${_MSTACK_VALUE[x]}
+				_MSTACK_VALUE_TO_PRINT=$(__THOU_SEP ${_MSTACK_VALUE[x]})
 				if [ ${#_MSTACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10-${#_MSTACK_DESC[x]}-3)) ]
 				then {
 					_MSTACK_VALUE_SUFFIX="... (${#_MSTACK_VALUE[x]})"
@@ -436,6 +507,9 @@ __PRINT_HELP () {
 
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}clear${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cls${_COLOR_FG_NONE} Clear the working stack\n"
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mclear${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}mcls${_COLOR_FG_NONE} Clear the memory stack\n"
+
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}ts${_COLOR_FG_NONE} Toggle digit grouping of integer value\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}tsf${_COLOR_FG_NONE} Tobble digit grouping of fractional value\n"
 
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}x${_COLOR_FG_NONE} Repeat previous command\n"
 	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}q${_COLOR_FG_NONE} Quit, exit to shell\n"
@@ -605,7 +679,7 @@ do
 
 	#
 	# Strip embedded commas as separators in input number. I'm in the US, so
-	# comma is group separator and dot is decimal separator, so adjust accordingly
+	# comma is thousands separator and dot is decimal separator, so adjust accordingly
 	# if you're outside the US. This has the unfortunate side effect of stripping
 	# commas from the description used for the memory stack, so deal with it. :(
 	#
@@ -703,19 +777,33 @@ do
 		#
 		then {
 			#
-			# If operand is 1 > n > -1 without preceding zero, go ahead
-			# and tack it on.
-			#
-			if [[ ${_INPUT} =~ ^[+-]?\.[0-9]+$ ]]
-			then {
-				_INPUT=${_INPUT/./0.}
-			} fi
-			#
 			# If operand has preceding '+', drop it.
 			#
 			if [[ ${_INPUT:0:1} =~ "+" ]]
 			then {
 				_INPUT=${_INPUT/+/}
+			} fi
+			#
+			# If operand is 1 > n > -1 without preceding zero, go ahead
+			# and tack it on.
+			#
+			if [[ ${_INPUT} =~ ^[-]?\.[0-9]+$ ]]
+			then {
+				_INPUT=${_INPUT/./0.}
+			} fi
+			#
+			# If operand has trailing zeros to the right of the decimal point, drop them
+			#
+			if [[ ${_INPUT} =~ "." ]]
+			then {
+				_INPUT=$(echo ${_INPUT} | sed '/\./ s/\.\{0,1\}0\{1,\}$//')
+			} fi
+			#
+			# If operand has leading zeros, drop them
+			#
+			if [[ ${_INPUT} =~ ^0+[0-9] ]]
+			then {
+				_INPUT=$(echo ${_INPUT} | sed 's/^0\{1,\}//')
 			} fi
 			#
 			# Shift all stack values up one place in the stack to make room for new operand in position 1
@@ -1449,6 +1537,34 @@ do
 				_ANG="RAD"
 			} else {
 				_ANG="DEG"
+			} fi
+		}
+
+
+		elif [[ ${_INPUT} =~ ^ts$ ]]
+		#
+		# Toggle between enabling and disabling thousands separators
+		#
+		then {
+			if [[ ${_OPT_THOU_SEP} -eq 0 ]]
+			then {
+				((_OPT_THOU_SEP = 1))
+			} else {
+				((_OPT_THOU_SEP = 0))
+			} fi
+		}
+
+
+		elif [[ ${_INPUT} =~ ^tsf$ ]]
+		#
+		# Toggle between enabling and disabling thousands separators for fractional values
+		#
+		then {
+			if [[ ${_OPT_THOU_SEP_FRAC} -eq 0 ]]
+			then {
+				((_OPT_THOU_SEP_FRAC = 1))
+			} else {
+				((_OPT_THOU_SEP_FRAC = 0))
 			} fi
 		}
 
