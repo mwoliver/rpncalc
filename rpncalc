@@ -88,6 +88,7 @@
 #        the "_OPT_THOU_SEP_FRAC" to enable for right side of decimal, anything else to disable.
 # v4.2 - Added real-time toggle to en/disable digit grouping (faster without, easier to read with) by
 #        issuing the 'ts' and 'tsf' commands. Those will toggle thousands separators on/off.
+# v4.3 - Fix bug in thou sep function that I introduced in v4.2 (nice move, Mr. Bozo...)
 
 
 #============== BASH COLORS =============================================
@@ -236,22 +237,21 @@ __THOU_SEP () {
 		# Add the decimal to the left of the fractional value for returning value later
 		#
 		_TS_FRAC=".${_TS_FRAC}"
+	} fi
+	#
+	# No fraction, just the integer, so add the defined thousands separator, if enabled
+	#
+	if [ ${_OPT_THOU_SEP} -eq 1 ]
+	then {
+		#
+		# The integer just needs right-to-left separation in groups of three, pretty easy
+		#
+		local _TS_INT=$(echo ${_INTEGER} | awk -v _THOU_SEP_CHAR=${_THOU_SEP_CHAR} '{ len=length($0); res=""; for (i=0;i<=len;i++) { res=substr($0,len-i+1,1) res; if (i > 0 && i < len && i % 3 == 0) { res = _THOU_SEP_CHAR res } }; print res }')
 	} else {
 		#
-		# No fraction, just the integer, so add the defined thousands separator, if enabled
+		# Separators for the integer value are disabled, pass it through...
 		#
-		if [ ${_OPT_THOU_SEP} -eq 1 ]
-		then {
-			#
-			# The integer just needs right-to-left separation in groups of three, pretty easy
-			#
-			local _TS_INT=$(echo ${_INTEGER} | awk -v _THOU_SEP_CHAR=${_THOU_SEP_CHAR} '{ len=length($0); res=""; for (i=0;i<=len;i++) { res=substr($0,len-i+1,1) res; if (i > 0 && i < len && i % 3 == 0) { res = _THOU_SEP_CHAR res } }; print res }')
-		} else {
-			#
-			# Separators for the integer value are disabled, pass it through...
-			#
-			local _TS_INT=${_INTEGER}
-		} fi
+		local _TS_INT=${_INTEGER}
 	} fi
 	#
 	# Return result
