@@ -461,12 +461,12 @@ __PRINT_MEMORY_STACK () {
 #
 #
 __RAD2DEG () {
-	echo "${1}*(180/${_PI})" | bc -l
+	__CALC "${1}*(180/${_PI})"
 }
 #
 #
 __DEG2RAD () {
-	echo "${1}*(${_PI}/180)" | bc -l
+	__CALC "${1}*(${_PI}/180)"
 }
 #
 #
