@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ###############################################################################
 #
@@ -89,6 +89,12 @@
 # v4.2 - Added real-time toggle to en/disable digit grouping (faster without, easier to read with) by
 #        issuing the 'ts' and 'tsf' commands. Those will toggle thousands separators on/off.
 # v4.3 - Fix bug in thou sep function that I introduced in v4.2 (nice move, Mr. Bozo...)
+# v5.0 - Major changes, including:
+#        1. removed nearly all subshell execution in favor of pure bash alternatives - much faster now
+#        2. added right edge border using calculated terminal width and shell escape sequences
+#        3. implemented bash array for input history
+#        4. complete rebuild of digit grouping function to avoid subshell calls, huge speed improvement
+#        5. rebuild of leading/trailing zero elimination code, pure bash, much faster
 
 
 #============== BASH COLORS =============================================
@@ -139,6 +145,7 @@ _MSTACK_VISIBLE_DEPTH=8  # How many rows of the memory stack should be visible?
 _STACK_VISIBLE_DEPTH=8   # How many rows of the working stack should be visible?
 #
 _WIDTH=$(stty -a  | grep -Po '(?<=columns )\d+')     # set to desired border width, something less than or equal to terminal width
+_LAST_COL="\033[$(($(tput cols)-2))C"                # set EOL position for right border character
 #
 _COLOR_FRAME="${_COLOR_FG_BRIGHT_GREEN}"    # color used for frames around sections (stack, memory stack, history, etc)
 _COLOR_TITLE="${_COLOR_FG_BRIGHT_MAGENTA}"  # color for various titles and headings
@@ -194,6 +201,13 @@ _MSTACK_FILE="${_CONF_DIR}/rpncalc.mstack"
 
 
 #
+# Initialize the _INPUT_ALL array
+#
+declare -a _INPUT_ALL
+
+
+
+#
 # Load overrides for user-configurable stuff from config file
 #
 source ${_CONF_FILE}
@@ -208,55 +222,69 @@ source ${_CONF_FILE}
 #
 #
 __THOU_SEP () {
-	local _INTEGER=${1/%.*/}
 	#
-	# Check if we have a fractional value by searching for decimal point
+	# We'll always have at least a zero before the decimal so asssign that to local var
+	#
+	local _INTEGER=${1%%.*}
+	#
+	# Initialize the local integer output var
+	#
+	local _TS_INT=""
+	#
+	# Are we grouping the integer?
+	#
+	if [[ ${_OPT_THOU_SEP} -eq 1 ]]
+	then {
+		#
+		# Integer: group right-to-left
+		#
+		while (( ${#_INTEGER} > 3 ))
+		do
+			_TS_INT="${_THOU_SEP_CHAR}${_INTEGER: -3}${_TS_INT}"
+			_INTEGER="${_INTEGER:0:${#_INTEGER}-3}"
+		done
+		_TS_INT="${_INTEGER}${_TS_INT}"
+	} else {
+		#
+		# Option not enabled, set output var value to input var value
+		#
+		_TS_INT=${_INTEGER}
+	} fi
+	#
+	# Is there a fractional value?
 	#
 	if [[ ${1} =~ '.' ]]
 	then {
 		#
-		# There is a fractional value, act upon fraction accordingly
+		# The input var has a '.' so append to output var
 		#
-		local _FRACTION=${1/#*./}
+		_TS_INT="${_TS_INT}."
 		#
-		# Are we adding separators for the fraction?
+		# Setup local vars for fraction manipulation
 		#
-		if [ ${_OPT_THOU_SEP_FRAC} -eq 1 ]
+		local _FRACTION=${1#*.}
+		local _TS_FRAC=""
+		#
+		# Are we grouping the fraction?
+		#
+		if [[ ${_OPT_THOU_SEP_FRAC} -eq 1 ]]
 		then {
 			#
-			# The fraction is more difficult, need to reverse order, separate in groups of three, then reverse order again
+			# Fractional: left-to-right
 			#
-			local _TS_FRAC=$(echo ${_FRACTION} | rev | awk -v _THOU_SEP_CHAR_FRAC=${_THOU_SEP_CHAR_FRAC} '{ len=length($0); res=""; for (i=0;i<=len;i++) { res=substr($0,len-i+1,1) res; if (i > 0 && i < len && i % 3 == 0) { res = _THOU_SEP_CHAR_FRAC res } }; print res }' | rev)
+			while (( ${#_FRACTION} > 3 ))
+			do
+				_TS_FRAC="${_TS_FRAC}${_FRACTION:0:3}${_THOU_SEP_CHAR_FRAC}"
+				_FRACTION="${_FRACTION:3}"
+			done
+			_TS_FRAC="${_TS_FRAC}${_FRACTION}"
 		} else {
-			#
-			# Separators for the fractional value are disabled, pass it through...
-			#
-			local _TS_FRAC=${_FRACTION}
+			_TS_FRAC=${_FRACTION}
 		} fi
-		#
-		# Add the decimal to the left of the fractional value for returning value later
-		#
-		_TS_FRAC=".${_TS_FRAC}"
-	} fi
-	#
-	# No fraction, just the integer, so add the defined thousands separator, if enabled
-	#
-	if [ ${_OPT_THOU_SEP} -eq 1 ]
-	then {
-		#
-		# The integer just needs right-to-left separation in groups of three, pretty easy
-		#
-		local _TS_INT=$(echo ${_INTEGER} | awk -v _THOU_SEP_CHAR=${_THOU_SEP_CHAR} '{ len=length($0); res=""; for (i=0;i<=len;i++) { res=substr($0,len-i+1,1) res; if (i > 0 && i < len && i % 3 == 0) { res = _THOU_SEP_CHAR res } }; print res }')
+		echo "${_TS_INT}${_TS_FRAC}"
 	} else {
-		#
-		# Separators for the integer value are disabled, pass it through...
-		#
-		local _TS_INT=${_INTEGER}
+		echo "${_TS_INT}"
 	} fi
-	#
-	# Return result
-	#
-	echo "${_TS_INT}${_TS_FRAC}"
 }
 #
 #
@@ -300,7 +328,7 @@ __PRINT_WORKING_STACK () {
 	#
 	# Loop through the working stack and printf values, if there are any values
 	#
-	printf "${_VR} ${_COLOR_TITLE}Working Stack [%04i]:${_COLOR_FG_NONE}\n" ${_STACK_DEPTH}
+	printf "${_VR} ${_COLOR_TITLE}Working Stack [%04i]:${_COLOR_FG_NONE}${_LAST_COL}${_VR}\n" ${_STACK_DEPTH}
 	#
 	#
 	if [[ ${_STACK_DEPTH} -gt 0 ]]
@@ -319,61 +347,42 @@ __PRINT_WORKING_STACK () {
 			_STACK_DISPLAY_DEPTH=${_STACK_DEPTH}
 		} fi
 		#
-		if [ $(echo "scale=0;${_STACK_DISPLAY_DEPTH} % 2" | bc -l) -eq 1 ]
-		then {
+		for ((x=${_STACK_DISPLAY_DEPTH};x>0;x--))
+		do
 			#
-			# Odd stack depth, odd rows will be _COLOR1, even will be _COLOR2
+			# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
 			#
-			for ((x=${_STACK_DISPLAY_DEPTH};x>0;x--))
-			do
-				#
-				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
-				#
-				_STACK_VALUE_TO_PRINT=$(__THOU_SEP ${_STACK[x]})
-				if [ ${#_STACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10)) ]
+			_STACK_VALUE_TO_PRINT=$(__THOU_SEP ${_STACK[x]})
+			if [ ${#_STACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10)) ]
+			then {
+				_STACK_VALUE_SUFFIX="... (${#_STACK[x]})"
+				_STACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_STACK_VALUE_SUFFIX}))
+				_STACK_VALUE_TO_PRINT="${_STACK_VALUE_TO_PRINT:0:${_STACK_VALUE_WIDTH}}${_STACK_VALUE_SUFFIX}"
+			} fi
+			#
+			# Toggle colors if necessary
+			#
+			if [ $((_STACK_DISPLAY_DEPTH%2)) -eq 0 ] # even stack length
+			then {
+				if [ $((x%2)) -eq 0 ]
 				then {
-					_STACK_VALUE_SUFFIX="... (${#_STACK[x]})"
-					_STACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_STACK_VALUE_SUFFIX}))
-					_STACK_VALUE_TO_PRINT="${_STACK_VALUE_TO_PRINT:0:${_STACK_VALUE_WIDTH}}${_STACK_VALUE_SUFFIX}"
-				} fi
-				#
-				#
-				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
-				then {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_1}" # even stack position, color 1
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_2}" # odd stack position, color 2
 				} fi
-			done
-		} else {
-			#
-			# Even stack depth, odd rows will be _COLOR2, even will be _COLOR1
-			#
-			for ((x=${_STACK_DISPLAY_DEPTH};x>0;x--))
-			do
-				#
-				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
-				#
-				_STACK_VALUE_TO_PRINT=$(__THOU_SEP ${_STACK[x]})
-				if [ ${#_STACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10)) ]
+			} else { # odd stack length
+				if [ $((x%2)) -eq 0 ]
 				then {
-					_STACK_VALUE_SUFFIX="... (${#_STACK[x]})"
-					_STACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_STACK_VALUE_SUFFIX}))
-					_STACK_VALUE_TO_PRINT="${_STACK_VALUE_TO_PRINT:0:${_STACK_VALUE_WIDTH}}${_STACK_VALUE_SUFFIX}"
-				} fi
-				#
-				#
-				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
-				then {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_2}" # even stack position, color 2
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s${_COLOR_FG_NONE}\n" ${x} ${_STACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_1}" # odd stack position, color 1
 				} fi
-			done
-			unset _STACK_VALUE_TO_PRINT
-		} fi
+			} fi
+			printf "${_VR}   ${_ROW_COLOR}%03i : %s${_COLOR_FG_NONE}${_LAST_COL}${_VR}\n" ${x} ${_STACK_VALUE_TO_PRINT}
+		done
+		unset _STACK_VALUE_TO_PRINT
 	} else {
-		printf "${_VR}   Stack is empty...\n"
+		printf "${_VR}   Stack is empty...${_LAST_COL}${_VR}\n"
 	} fi
 }
 #
@@ -382,7 +391,7 @@ __PRINT_MEMORY_STACK () {
 	#
 	# Loop through the memory stack and printf values, if there are any values in the memory stack
 	#
-	printf "${_VR} ${_COLOR_TITLE}Memory Stack [%04i]:${_COLOR_FG_NONE}\n" ${_MSTACK_DEPTH}
+	printf "${_VR} ${_COLOR_TITLE}Memory Stack [%04i]:${_COLOR_FG_NONE}${_LAST_COL}${_VR}\n" ${_MSTACK_DEPTH}
 	#
 	#
 	if [[ ${_MSTACK_DEPTH} -gt 0 ]]
@@ -401,58 +410,41 @@ __PRINT_MEMORY_STACK () {
 			_MSTACK_DISPLAY_DEPTH=${_MSTACK_DEPTH}
 		} fi
 		#
-		if [ $(echo "scale=0;${_MSTACK_DISPLAY_DEPTH} % 2" | bc -l) -eq 1 ]
-		then {
+
+		for ((x=${_MSTACK_DISPLAY_DEPTH};x>0;x--))
+		do
 			#
-			# Odd stack depth, odd rows will be _COLOR1, even will be _COLOR2
+			# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
 			#
-			for ((x=${_MSTACK_DISPLAY_DEPTH};x>0;x--))
-			do
-				#
-				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
-				#
-				_MSTACK_VALUE_TO_PRINT=$(__THOU_SEP ${_MSTACK_VALUE[x]})
-				if [ ${#_MSTACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10-${#_MSTACK_DESC[x]}-3)) ]
+			_MSTACK_VALUE_TO_PRINT=$(__THOU_SEP ${_MSTACK_VALUE[x]})
+			if [ ${#_MSTACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10-${#_MSTACK_DESC[x]}-3)) ]
+			then {
+				_MSTACK_VALUE_SUFFIX="... (${#_MSTACK_VALUE[x]})"
+				_MSTACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_MSTACK_VALUE_SUFFIX}-${#_MSTACK_DESC[x]}-3))
+				_MSTACK_VALUE_TO_PRINT="${_MSTACK_VALUE_TO_PRINT:0:${_MSTACK_VALUE_WIDTH}}${_MSTACK_VALUE_SUFFIX}"
+			} fi
+			#
+			# Toggle colors if necessary
+			#
+			if [ $((_MSTACK_DISPLAY_DEPTH%2)) -eq 0 ] # even Mstack length
+			then {
+				if [ $((x%2)) -eq 0 ]
 				then {
-					_MSTACK_VALUE_SUFFIX="... (${#_MSTACK_VALUE[x]})"
-					_MSTACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_MSTACK_VALUE_SUFFIX}-${#_MSTACK_DESC[x]}-3))
-					_MSTACK_VALUE_TO_PRINT="${_MSTACK_VALUE_TO_PRINT:0:${_MSTACK_VALUE_WIDTH}}${_MSTACK_VALUE_SUFFIX}"
-				} fi
-				#
-				#
-				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
-				then {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_1}" # even Mstack position, color 1
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_2}" # odd Mstack position, color 2
 				} fi
-			done
-		} else {
-			#
-			# Even stack depth, odd rows will be _COLOR2, even will be _COLOR1
-			#
-			for ((x=${_MSTACK_DISPLAY_DEPTH};x>0;x--))
-			do
-				#
-				# Retrieve stack[x] value, determine length of string, and truncate if necessary when printing
-				#
-				_MSTACK_VALUE_TO_PRINT=$(__THOU_SEP ${_MSTACK_VALUE[x]})
-				if [ ${#_MSTACK_VALUE_TO_PRINT} -gt $((${_WIDTH}-10-${#_MSTACK_DESC[x]}-3)) ]
+			} else { # odd Mstack length
+				if [ $((x%2)) -eq 0 ]
 				then {
-					_MSTACK_VALUE_SUFFIX="... (${#_MSTACK_VALUE[x]})"
-					_MSTACK_VALUE_WIDTH=$((${_WIDTH}-10-${#_MSTACK_VALUE_SUFFIX}-${#_MSTACK_DESC[x]}-3))
-					_MSTACK_VALUE_TO_PRINT="${_MSTACK_VALUE_TO_PRINT:0:${_MSTACK_VALUE_WIDTH}}${_MSTACK_VALUE_SUFFIX}"
-				} fi
-				#
-				#
-				if [ $(echo "scale=0;${x} % 2" | bc -l) -eq 1 ]
-				then {
-					printf "${_VR}   ${_COLOR_ROW_2}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_2}" # even Mstack position, color 2
 				} else {
-					printf "${_VR}   ${_COLOR_ROW_1}%03i : %s - %s${_COLOR_FG_NONE}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
+					_ROW_COLOR="${_COLOR_ROW_1}" # odd Mstack position, color 1
 				} fi
-			done
-		} fi
+			} fi
+			printf "${_VR}   ${_ROW_COLOR}%03i : %s - %s${_COLOR_FG_NONE}${_LAST_COL}${_VR}\n" ${x} ${_MSTACK_DESC[x]} ${_MSTACK_VALUE_TO_PRINT}
+		done
+		unset _MSTACK_VALUE_TO_PRINT
 	} else {
 		printf "${_VR}   Memory stack is empty...\n"
 	} fi
@@ -471,75 +463,75 @@ __DEG2RAD () {
 #
 #
 __PRINT_HELP () {
-	printf "${_VR} ${_COLOR_TITLE}Help / Command List:${_COLOR_FG_NONE}\n"
+	printf "${_VR} ${_COLOR_TITLE}Help / Command List:${_COLOR_FG_NONE}${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}n.n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-n.n${_COLOR_FG_NONE} Add operand 'n' to the stack\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}+${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}*${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}/${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}^${_COLOR_FG_NONE} Perform operation on stack positions 2 & 1\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}--${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}//${_COLOR_FG_NONE} Subtract or divide stack position 1 by stack position 2 (swap then - or /, combined)\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}n.n${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-n.n${_COLOR_FG_NONE} Add operand 'n' to the stack${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}+${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}-${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}*${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}/${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}^${_COLOR_FG_NONE} Perform operation on stack positions 2 & 1${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}--${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}//${_COLOR_FG_NONE} Subtract or divide stack position 1 by stack position 2 (swap then - or /, combined)${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}DEG${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}deg${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}RAD${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rad${_COLOR_FG_NONE} Switch to DEGree or RADian mode\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/${_COLOR_FG_NONE} Apply to stack '1', overwriting '1'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/ p${_COLOR_FG_NONE} Apply to stack 'p', insert result in stack '1'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}pi${_COLOR_FG_NONE} Insert value of pi\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}DEG${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}deg${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}RAD${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rad${_COLOR_FG_NONE} Switch to DEGree or RADian mode${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/${_COLOR_FG_NONE} Apply to stack '1', overwriting '1'${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}sqrt${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}tan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}csc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asin${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acos${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}atan${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}asec${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acsc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}acot${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}log${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}e${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}1/ p${_COLOR_FG_NONE} Apply to stack 'p', insert result in stack '1'${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}pi${_COLOR_FG_NONE} Insert value of pi${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}perm${_COLOR_FG_NONE} Calculate permutations (stack position 2 is 'n', position 1 is 'r')\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}comb${_COLOR_FG_NONE} Calculate combinations (stack position 2 is 'n', position 1 is 'r')\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}perm${_COLOR_FG_NONE} Calculate permutations (stack position 2 is 'n', position 1 is 'r')${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}comb${_COLOR_FG_NONE} Calculate combinations (stack position 2 is 'n', position 1 is 'r')${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}swap${_COLOR_FG_NONE} Swap operands in stack positions 1 & 2 (X & Y)\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}ru${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}ru p${_COLOR_FG_NONE} Roll-Up (all, or where 'p' is the stack location)\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}rd${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rd p${_COLOR_FG_NONE} Roll-Down (all,or where 'p' is the stack location)\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}pick p${_COLOR_FG_NONE} Copy operand from stack position 'p' to stack position 1\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}del p${_COLOR_FG_NONE} Delete the operand in stack position 'p'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}repl p n${_COLOR_FG_NONE} Replace the operand in stack position 'p' with new operand 'n'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}ins p n${_COLOR_FG_NONE} Insert new operand 'n' in stack position 'p'\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}swap${_COLOR_FG_NONE} Swap operands in stack positions 1 & 2 (X & Y)${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}ru${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}ru p${_COLOR_FG_NONE} Roll-Up (all, or where 'p' is the stack location)${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}rd${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rd p${_COLOR_FG_NONE} Roll-Down (all,or where 'p' is the stack location)${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}pick p${_COLOR_FG_NONE} Copy operand from stack position 'p' to stack position 1${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}del p${_COLOR_FG_NONE} Delete the operand in stack position 'p'${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}repl p n${_COLOR_FG_NONE} Replace the operand in stack position 'p' with new operand 'n'${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}ins p n${_COLOR_FG_NONE} Insert new operand 'n' in stack position 'p'${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mw desc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sto desc${_COLOR_FG_NONE} Copy operand from stack position 1 to memory stack position 1 with description 'desc'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mr p${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rcl p${_COLOR_FG_NONE} Copy operand from memory stack position 'p' to stack position 1\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}md p${_COLOR_FG_NONE} Delete the operand in memory stack position 'p'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mru${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}ru p${_COLOR_FG_NONE} Roll-Up (all, or where 'p' is the stack location)\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mrd${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rd p${_COLOR_FG_NONE} Roll-Down (all,or where 'p' is the stack location)\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mw desc${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}sto desc${_COLOR_FG_NONE} Copy operand from stack position 1 to memory stack position 1 with description 'desc'${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mr p${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rcl p${_COLOR_FG_NONE} Copy operand from memory stack position 'p' to stack position 1${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}md p${_COLOR_FG_NONE} Delete the operand in memory stack position 'p'${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mru${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}ru p${_COLOR_FG_NONE} Roll-Up (all, or where 'p' is the stack location)${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mrd${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}rd p${_COLOR_FG_NONE} Roll-Down (all,or where 'p' is the stack location)${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}help${_COLOR_FG_NONE} Display this help section\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}hist${_COLOR_FG_NONE} Display all commands thus far\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}last${_COLOR_FG_NONE} Display the most recent command\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}disp n${_COLOR_FG_NONE} Adjust the number of rows displayed in the working stack to 'n'\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mdisp n${_COLOR_FG_NONE} Adjust the number of rows displayed in the memory stack to 'n'\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}help${_COLOR_FG_NONE} Display this help section${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}hist${_COLOR_FG_NONE} Display all commands thus far${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}last${_COLOR_FG_NONE} Display the most recent command${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}disp n${_COLOR_FG_NONE} Adjust the number of rows displayed in the working stack to 'n'${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mdisp n${_COLOR_FG_NONE} Adjust the number of rows displayed in the memory stack to 'n'${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}clear${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cls${_COLOR_FG_NONE} Clear the working stack\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mclear${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}mcls${_COLOR_FG_NONE} Clear the memory stack\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}clear${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}cls${_COLOR_FG_NONE} Clear the working stack${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}mclear${_COLOR_FG_NONE},${_COLOR_FG_BRIGHT_RED}mcls${_COLOR_FG_NONE} Clear the memory stack${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}ts${_COLOR_FG_NONE} Toggle digit grouping of integer value\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}tsf${_COLOR_FG_NONE} Tobble digit grouping of fractional value\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}ts${_COLOR_FG_NONE} Toggle digit grouping of integer value${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}tsf${_COLOR_FG_NONE} Tobble digit grouping of fractional value${_LAST_COL}${_VR}\n"
 
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}x${_COLOR_FG_NONE} Repeat previous command\n"
-	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}q${_COLOR_FG_NONE} Quit, exit to shell\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}x${_COLOR_FG_NONE} Repeat previous command${_LAST_COL}${_VR}\n"
+	printf "${_VR}   ${_COLOR_FG_BRIGHT_RED}q${_COLOR_FG_NONE} Quit, exit to shell${_LAST_COL}${_VR}\n"
 
 	printf "${_HR_MID}\n"
 }
 #
 #
 __PRINT_HISTORY () {
-	printf "${_VR} ${_COLOR_TITLE}Command History:${_COLOR_FG_NONE}\n"
+	printf "${_VR} ${_COLOR_TITLE}Command History:${_COLOR_FG_NONE}${_LAST_COL}${_VR}\n"
 	if [[ -z ${_INPUT_ALL} ]]
 	then {
-		printf "${_VR}   Nothing yet...\n"
+		printf "${_VR}   Nothing yet...${_LAST_COL}${_VR}\n"
 	} else {
-		while IFS="" read _HIST_LINE
+		for _HIST_LINE in "${_INPUT_ALL[@]}"
 		do
-			[[ ! -z ${_HIST_LINE} ]] && printf "${_VR}   ${_HIST_LINE}\n"
-		done < <(echo ${_INPUT_ALL})
+			[[ ! -z ${_HIST_LINE} ]] && printf "${_VR}   ${_HIST_LINE}${_LAST_COL}${_VR}\n"
+		done
 	} fi
 	printf "${_HR_MID}\n"
 }
 #
 #
 __PRINT_LAST () {
-	printf "${_VR} ${_COLOR_TITLE}Input was (x<enter> to repeat):${_COLOR_FG_NONE}\n"
+	printf "${_VR} ${_COLOR_TITLE}Input was (x<enter> to repeat):${_COLOR_FG_NONE}${_LAST_COL}${_VR}\n"
 	if [[ -z ${_INPUT} ]]
 	then {
-		printf "${_VR}   Nothing yet...\n"
+		printf "${_VR}   Nothing yet...${_LAST_COL}${_VR}\n"
 	} else {
-		printf "${_VR}   ${_INPUT}\n"
+		printf "${_VR}   ${_INPUT}${_LAST_COL}${_VR}\n"
 	} fi
 	printf "${_HR_MID}\n"
 }
@@ -586,7 +578,8 @@ __BUILD_MEMORY_STACK_FROM_FILE () {
 #
 # Let's clear the screen to have a clean workspace
 #
-clear
+#clear
+printf "\033[H\033[2J"
 
 IFS=""
 ((_STACK_DEPTH = 0))
@@ -743,6 +736,7 @@ do
 		unset _INPUT_OLD
 		unset _INPUT_ALL
 		unset _STACK_INPUT
+		declare -a INPUT_ALL
 	} fi
 
 
@@ -758,8 +752,8 @@ do
 	#
 	# Store the _INPUT in separate var for potential reuse
 	#
-	_INPUT_OLD=${_INPUT}
-	_INPUT_ALL=$(printf "${_INPUT_ALL}\n${_INPUT}")
+	_INPUT_OLD="${_INPUT}"
+	_INPUT_ALL+=("${_INPUT}")
 
 
 	###################
@@ -794,17 +788,21 @@ do
 			#
 			# If operand has trailing zeros to the right of the decimal point, drop them
 			#
-			if [[ ${_INPUT} =~ "." ]]
-			then {
-				_INPUT=$(echo ${_INPUT} | sed '/\./ s/\.\{0,1\}0\{1,\}$//')
-			} fi
+			while [[ "${_INPUT: -1}" == "0" ]] && [[ "${_INPUT}" =~ "." ]]
+			do
+				_INPUT="${_INPUT:0: -1}"
+			done
 			#
 			# If operand has leading zeros, drop them
 			#
-			if [[ ${_INPUT} =~ ^0+[0-9] ]]
-			then {
-				_INPUT=$(echo ${_INPUT} | sed 's/^0\{1,\}//')
-			} fi
+			while [[ "${_INPUT:0:1}" == "0" ]] && (( ${#_INPUT} > 1 ))
+			do
+				_INPUT="${_INPUT:1}"
+			done
+			#
+			# If operand has a trailing decimal point, drop it
+			#
+			_INPUT="${_INPUT%.}"
 			#
 			# Shift all stack values up one place in the stack to make room for new operand in position 1
 			#
@@ -832,8 +830,10 @@ do
 			#
 			# What function are we performing?
 			#
-			_FUNC=$(echo ${_INPUT} | cut -d' ' -f1)
-			_STACK_POS=$(echo ${_INPUT} | awk '{print $2;}')
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_FUNC=${_INPUT_ARRAY[0]}
+			_STACK_POS=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
 			#
 			# Test to see if we're applying this function to some value in the stack other than
 			# the first position
@@ -1051,8 +1051,10 @@ do
 			#
 			# In what position are we inserting?
 			#
-			_STACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
-			_OPERAND=$(echo ${_INPUT} | cut -d' ' -f3)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_STACK_POS=${_INPUT_ARRAY[1]}
+			_OPERAND=${_INPUT_ARRAY[2]}
+			unset _INPUT_ARRAY
 			#
 			# shift all stack values up one place in the stack to make room for
 			# new operand in the requested position
@@ -1092,8 +1094,10 @@ do
 			#
 			# What position are we replacing?
 			#
-			_STACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
-			_OPERAND=$(echo ${_INPUT} | cut -d' ' -f3)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_STACK_POS=${_INPUT_ARRAY[1]}
+			_OPERAND=${_INPUT_ARRAY[2]}
+			unset _INPUT_ARRAY
 			#
 			# Replace stack value
 			#
@@ -1109,7 +1113,9 @@ do
 			#
 			# From what position are we picking?
 			#
-			_STACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_STACK_POS=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
 			#
 			# Retrieve stack value
 			#
@@ -1141,7 +1147,9 @@ do
 			#
 			# What position are we deleting?
 			#
-			_STACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_STACK_POS=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
 			#
 			# Shift stack values down one place
 			#
@@ -1168,11 +1176,18 @@ do
 			#
 			# Purge existing mstack file and rebuild from live stack
 			#
-			mv ${_MSTACK_FILE} ${_MSTACK_FILE}.backup_$(date +%Y_%m_%d_%H_%M_%S) && touch ${_MSTACK_FILE}
+			/bin/mv ${_MSTACK_FILE} ${_MSTACK_FILE}.backup_$(date +%Y_%m_%d_%H_%M_%S) && touch ${_MSTACK_FILE}
 			#
 			# describe the memory stack entry for reference later
 			#
-			_DESC=$(echo ${_INPUT} | cut -d' ' -f2-)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			#
+			# drop the 'mw' or 'sto' command in element 0 of the array
+			# and use the remaining content of array for description
+			#
+			unset _INPUT_ARRAY[0]
+			_DESC="${_INPUT_ARRAY[@]}"
+			unset _INPUT_ARRAY
 			#
 			# shift all stack values up one place in the stack to make room for
 			# new operand in the requested position
@@ -1204,7 +1219,9 @@ do
 			#
 			# From what position are we picking?
 			#
-			_MSTACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_MSTACK_POS=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
 			#
 			# Retrieve stack value
 			#
@@ -1236,11 +1253,13 @@ do
 			#
 			# Purge existing mstack file and rebuild from live stack
 			#
-			mv ${_MSTACK_FILE} ${_MSTACK_FILE}.backup_$(date +%Y_%m_%d_%H_%M_%S) && touch ${_MSTACK_FILE}
+			/bin/mv ${_MSTACK_FILE} ${_MSTACK_FILE}.backup_$(date +%Y_%m_%d_%H_%M_%S) && touch ${_MSTACK_FILE}
 			#
 			# What position are we deleting?
 			#
-			_MSTACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_MSTACK_POS=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
 			#
 			# Shift stack values down one place
 			#
@@ -1279,17 +1298,20 @@ do
 			#
 			# What position in the stack are we starting?
 			#
-			_STACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
-			if [[ ${_STACK_POS} =~ ^r(u|d)$ ]]
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_DIRECTION=${_INPUT_ARRAY[0]}
+			_STACK_POS=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
+			#
+			if [[ -z ${_STACK_POS} ]]
 			then {
 				_STACK_POS=${_STACK_DEPTH}
 			} fi
 			#
 			# Which direction are we rolling?
 			#
-			_DIRECTION=${_INPUT:1:1}
 			case ${_DIRECTION} in
-				u)
+				ru)
 					_TMP_OPERAND=${_STACK[${_STACK_POS}]}
 					for ((x=${_STACK_POS};x>1;x--))
 					do
@@ -1297,7 +1319,7 @@ do
 					done
 					_STACK[1]=${_TMP_OPERAND}
 				;;
-				d)
+				rd)
 					_TMP_OPERAND=${_STACK[1]}
 					for ((x=1;x<${_STACK_POS};x++))
 					do
@@ -1318,17 +1340,20 @@ do
 			#
 			# What position in the stack are we starting?
 			#
-			_MSTACK_POS=$(echo ${_INPUT} | cut -d' ' -f2)
-			if [[ ${_MSTACK_POS} =~ ^r(u|d)$ ]]
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_DIRECTION=${_INPUT_ARRAY[0]}
+			_MSTACK_POS=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
+			#
+			if [[ -z ${_MSTACK_POS} ]]
 			then {
 				_MSTACK_POS=${_MSTACK_DEPTH}
 			} fi
 			#
 			# Which direction are we rolling?
 			#
-			_DIRECTION=${_INPUT:2:1}
 			case ${_DIRECTION} in
-				u)
+				mru)
 					_TMP_OPERAND=${_MSTACK[${_MSTACK_POS}]}
 					for ((x=${_MSTACK_POS};x>1;x--))
 					do
@@ -1336,7 +1361,7 @@ do
 					done
 					_MSTACK[1]=${_TMP_OPERAND}
 				;;
-				d)
+				mrd)
 					_TMP_OPERAND=${_MSTACK[1]}
 					for ((x=1;x<${_MSTACK_POS};x++))
 					do
@@ -1532,11 +1557,11 @@ do
 		# Toggle between degrees and radians
 		#
 		then {
-			if [[ ${_ANG} == DEG ]]
+			if [[ ${_INPUT^^} == DEG ]]
 			then {
-				_ANG="RAD"
-			} else {
 				_ANG="DEG"
+			} else {
+				_ANG="RAD"
 			} fi
 		}
 
@@ -1574,7 +1599,9 @@ do
 		# Adjust displayed rows in the working stack from default to set value
 		#
 		then {
-			_STACK_VISIBLE_DEPTH=$(echo ${_INPUT} | cut -d' ' -f2)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_STACK_VISIBLE_DEPTH=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
 		}
 
 
@@ -1583,7 +1610,9 @@ do
 		# Adjust displayed rows in the memory stack from default to set value
 		#
 		then {
-			_MSTACK_VISIBLE_DEPTH=$(echo ${_INPUT} | cut -d' ' -f2)
+			IFS=" " read -ra _INPUT_ARRAY <<< "${_INPUT}"
+			_MSTACK_VISIBLE_DEPTH=${_INPUT_ARRAY[1]}
+			unset _INPUT_ARRAY
 		}
 
 
@@ -1596,7 +1625,7 @@ do
 		break
 	done
 
-	[ $_DEBUG -eq 0 ] && clear
+	[ $_DEBUG -eq 0 ] && printf "\033[H\033[2J"
 
 	printf "${_HR_TOP}\n"
 	[[ ${_HELP} -eq 1 ]] && __PRINT_HELP
